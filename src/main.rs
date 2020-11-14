@@ -36,18 +36,27 @@ impl Wasm {
             [ValType::I32, ValType::I32, ValType::I32].iter().cloned(),
             [].iter().cloned(),
         );
-        let callback_func = Func::new(&store, callback_type, |caller: Caller<'_>, args, results| {
-            let mem = match caller.get_export("memory") {
+        let callback_func = Func::new(&store, callback_type, |caller: Caller<'_>, args, _results| {
+            let memory = match caller.get_export("memory") {
                 Some(Extern::Memory(mem)) => mem,
                 _ => return Err(Trap::new("failed to find host memory")),
+            };
+            let malloc = match caller.get_export("__wbindgen_malloc") {
+                Some(Extern::Func(mem)) => mem.get1::<i32, i32>().unwrap(),
+                _ => return Err(Trap::new("failed to find host malloc")),
+            };
+            let realloc = match caller.get_export("__wbindgen_realloc") {
+                Some(Extern::Func(mem)) => mem.get3::<i32, i32, i32, i32>().unwrap(),
+                _ => return Err(Trap::new("failed to find host realloc")),
             };
 
             let arg0 = args[0].unwrap_i32();
             let arg1 = args[1].unwrap_i32();
             let arg2 = args[2].unwrap_i32();
 
-            let string = unsafe {
-                let data = mem.data_unchecked()
+            // 引数の文字列を取得する
+            let response = unsafe {
+                let data = memory.data_unchecked()
                     .get(arg1 as u32 as usize..)
                     .and_then(|arr| arr.get(..arg2 as u32 as usize));
                 let string = match data {
@@ -57,14 +66,136 @@ impl Wasm {
                     },
                     None => return Err(Trap::new("pointer/length out of bounds")),
                 };
-                let ret = sh(string);
-                println!("{}", ret);
-                ret
+                sh(string)
             };
     
-            // TODO: レスポンスをメモリに書き込む
-            // results[0] = Val::I32(arg0);
-            // results[1] = Val::I32(string.len() as i32);
+            // レスポンスをメモリに書き込む
+            let (ptr0, len0) = unsafe {
+                let len = response.len();
+                let mut ptr = malloc(len as i32).unwrap();
+
+                let mem = {
+                    let cacheget_uint8_memory0 = match caller.get_export("memory") {
+                        Some(Extern::Memory(mem)) => mem,
+                        _ => return Err(Trap::new("failed to find host memory")),
+                    };
+        
+                    let t = memory.clone();
+            
+                    if t.data_ptr() != cacheget_uint8_memory0.data_ptr() {
+                        cacheget_uint8_memory0
+                    } else {
+                        t
+                    }
+                };
+
+                let mut offset: usize = 0;
+
+                while offset < len {
+                    let code = response.as_bytes()[offset];
+                    if code > 0x7F { break }
+                    mem.data_unchecked_mut()[ptr as usize + offset] = code;
+                    offset = offset + 1;
+                }
+
+                if offset != len {
+                    let mut t_arg = response.as_str();
+                    if offset != 0 {
+                        t_arg = &response[0..offset];
+                    }
+                    let arg = t_arg;
+                    ptr = realloc(ptr, len as i32, (offset + arg.len() * 3) as i32).unwrap();
+                    let len = offset + arg.len() * 3;
+
+                    let t_array = {
+                        let cacheget_uint8_memory0 = match caller.get_export("memory") {
+                            Some(Extern::Memory(mem)) => mem,
+                            _ => return Err(Trap::new("failed to find host memory")),
+                        };
+            
+                        let t = mem.clone();
+                
+                        if t.data_ptr() != cacheget_uint8_memory0.data_ptr() {
+                            cacheget_uint8_memory0
+                        } else {
+                            t
+                        }
+                    };
+
+                    let view = &mut t_array.data_unchecked_mut()[(ptr + offset as i32) as usize .. (ptr + len as i32) as usize];
+                    let ret = {
+                        let read = arg.len();
+                        let mut buf = String::from_utf8(arg.to_string().into_bytes()).unwrap();
+                        let written = buf.len();
+                        ptr::copy_nonoverlapping::<u8>(buf.as_mut_ptr(), view.as_mut_ptr(), written);
+                        (read, written)
+                    };
+
+                    offset += ret.1;
+                }
+
+                (ptr, offset)
+            };
+
+            unsafe {
+                let cacheget_int32_memory0 = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => return Err(Trap::new("failed to find host memory")),
+                };
+    
+                let t = memory.clone();
+        
+                let int32_memory = if t.data_ptr() != cacheget_int32_memory0.data_ptr() {
+                    cacheget_int32_memory0
+                } else {
+                    t
+                };
+
+                int32_memory.data_unchecked_mut()[(arg0 + 0 + 1 * 4) as usize] = len0.to_le_bytes()[0];
+                int32_memory.data_unchecked_mut()[(arg0 + 1 + 1 * 4) as usize] = len0.to_le_bytes()[1];
+                int32_memory.data_unchecked_mut()[(arg0 + 2 + 1 * 4) as usize] = len0.to_le_bytes()[2];
+                int32_memory.data_unchecked_mut()[(arg0 + 3 + 1 * 4) as usize] = len0.to_le_bytes()[3];
+            }
+
+            unsafe {
+                let cacheget_int32_memory0 = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => return Err(Trap::new("failed to find host memory")),
+                };
+    
+                let t = memory.clone();
+        
+                let int32_memory = if t.data_ptr() != cacheget_int32_memory0.data_ptr() {
+                    cacheget_int32_memory0
+                } else {
+                    t
+                };
+
+                int32_memory.data_unchecked_mut()[(arg0 + 0) as usize] = ptr0.to_le_bytes()[0];
+                int32_memory.data_unchecked_mut()[(arg0 + 1) as usize] = ptr0.to_le_bytes()[1];
+                int32_memory.data_unchecked_mut()[(arg0 + 2) as usize] = ptr0.to_le_bytes()[2];
+                int32_memory.data_unchecked_mut()[(arg0 + 3) as usize] = ptr0.to_le_bytes()[3];
+            }
+
+            unsafe {
+                let memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => return Err(Trap::new("failed to find host memory")),
+                };
+
+                let data = memory.data_unchecked()
+                    .get(ptr0 as u32 as usize..)
+                    .and_then(|arr| arr.get(..len0 as u32 as usize));
+                let string = match data {
+                    Some(data) => match str::from_utf8(data) {
+                        Ok(s) => s,
+                        Err(_) => return Err(Trap::new("invalid utf-8")),
+                    },
+                    None => return Err(Trap::new("pointer/length out of bounds")),
+                };
+                println!("{}", string);
+            };
+
             Ok(())
         });
     
@@ -107,8 +238,22 @@ impl Wasm {
         let ptr0 = self.pass_string_to_wasm0(arg, malloc, realloc);
         let len0 = self.wasm_vector_len as i32;
         entry_point_func(retptr, ptr0, len0).unwrap();
-        let r0 = unsafe { self.get_int32_memory0().data_unchecked()[(retptr / 4 + 0) as usize] };
-        let r1 = unsafe { self.get_int32_memory0().data_unchecked()[(retptr / 4 + 1) as usize] };
+        let r0 = unsafe {
+            i32::from_le_bytes([
+                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 0) as usize],
+                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 1) as usize],
+                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 2) as usize],
+                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 3) as usize],
+            ])
+        };
+        let r1 = unsafe {
+            i32::from_le_bytes([
+                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 0 + 4) as usize],
+                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 1 + 4) as usize],
+                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 2 + 4) as usize],
+                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 3 + 4) as usize],
+            ])
+        };
         self.get_string_from_wasm0(r0 as i32, r1 as i32).to_string()
     }
 
