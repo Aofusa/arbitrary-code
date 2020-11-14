@@ -8,4 +8,4 @@ edition = "2018"
 anyhow = "1"
 wasmtime = "0.21"
 reqwest = { version = "0.10", features = ["blocking", "json"] }
-
+clap = "2"

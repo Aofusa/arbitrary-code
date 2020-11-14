@@ -1,11 +1,13 @@
 extern crate anyhow;
 extern crate wasmtime;
 extern crate reqwest;
+extern crate clap;
 
 use std::process::Command;
 use std::str;
 use std::ptr;
 use anyhow::Result;
+use clap::{App, Arg};
 use wasmtime::*;
 
 struct Wasm {
@@ -344,14 +346,35 @@ fn sh(s: &str) -> String {
 }
 
 fn main() {
-    let resp = reqwest::blocking::get("http://localhost:5000/hello-world").unwrap();
-    assert!(resp.status().is_success());
-    let mut wasm = Wasm::new_frombytes(&resp.bytes().unwrap());
+    let app = App::new("arbitrary-code")
+        .arg(Arg::with_name("remote")
+            .help("if enable this option, run http://localhost:5000/{program}, else server/assets/{program}/pkg/{program}_bg.wasm")
+            .short("r")
+            .long("remote")
+        )
+        .arg(Arg::with_name("program")
+            .help("choose wasm program (default: hello-world)")
+            .short("p")
+            .long("program")
+            .takes_value(true)
+        );
+    let args = app.get_matches();
 
-    // let filepath = "server/assets/hello-world/pkg/hello_world_bg.wasm";
-    // let mut wasm = Wasm::new_fromfile(filepath);
+    let program = match args.value_of("program") {
+        Some(x) => x,
+        _ => "hello-world",
+    };
+
+    let mut wasm = if args.is_present("remote") {
+        let resp = reqwest::blocking::get(&("http://localhost:5000/".to_string() + program)).unwrap();
+        assert!(resp.status().is_success());
+        Wasm::new_frombytes(&resp.bytes().unwrap())
+    } else {
+        let filepath = "server/assets/".to_string() + program + "/pkg/" + &program.replace("-", "_") + "_bg.wasm";
+        Wasm::new_fromfile(&filepath)
+    };
     
-    let result = wasm.entry_point("abc");
+    let result = wasm.entry_point(program);
     println!("{}", result);
 }
 
