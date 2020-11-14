@@ -5,13 +5,12 @@ extern crate reqwest;
 use std::process::Command;
 use std::str;
 use std::ptr;
-use std::collections::HashMap;
 use anyhow::Result;
 use wasmtime::*;
 
 struct Wasm {
-    store: Store,
-    module: Module,
+    // store: Store,
+    // module: Module,
     instance: Instance,
 
     cacheget_uint8_memory0: Option<Memory>,
@@ -33,18 +32,47 @@ impl Wasm {
     }
 
     fn init(store: Store, module: Module) -> Wasm {
-        let sh_func = Func::wrap(&store, |arg0: i32, arg1: i32, arg2: i32| {
-            // TODO: WebAssembly 側のメモリを受け取れるようにする
-            let ret = sh("ls");
-            println!("{}", ret);
+        let callback_type = FuncType::new(
+            [ValType::I32, ValType::I32, ValType::I32].iter().cloned(),
+            [].iter().cloned(),
+        );
+        let callback_func = Func::new(&store, callback_type, |caller: Caller<'_>, args, results| {
+            let mem = match caller.get_export("memory") {
+                Some(Extern::Memory(mem)) => mem,
+                _ => return Err(Trap::new("failed to find host memory")),
+            };
+
+            let arg0 = args[0].unwrap_i32();
+            let arg1 = args[1].unwrap_i32();
+            let arg2 = args[2].unwrap_i32();
+
+            let string = unsafe {
+                let data = mem.data_unchecked()
+                    .get(arg1 as u32 as usize..)
+                    .and_then(|arr| arr.get(..arg2 as u32 as usize));
+                let string = match data {
+                    Some(data) => match str::from_utf8(data) {
+                        Ok(s) => s,
+                        Err(_) => return Err(Trap::new("invalid utf-8")),
+                    },
+                    None => return Err(Trap::new("pointer/length out of bounds")),
+                };
+                let ret = sh(string);
+                println!("{}", ret);
+                ret
+            };
+    
+            // TODO: レスポンスをメモリに書き込む
+            // results[0] = Val::I32(arg0);
+            // results[1] = Val::I32(string.len() as i32);
             Ok(())
         });
     
-        let instance = Instance::new(&store, &module, &[sh_func.into()]).unwrap();
+        let instance = Instance::new(&store, &module, &[callback_func.into()]).unwrap();
         
         Wasm {
-            store: store,
-            module: module,
+            // store: store,
+            // module: module,
             instance: instance,
 
             cacheget_uint8_memory0: None,
@@ -85,7 +113,6 @@ impl Wasm {
     }
 
     fn get_int32_memory0(&mut self) -> Memory {
-        // TODO: メモリ周り正しくうごくように
         let cacheget_int32_memory0 = self.instance
             .get_memory("memory")
             .ok_or(anyhow::format_err!("failed to find `memory` memory export")).unwrap();
@@ -106,7 +133,6 @@ impl Wasm {
     }
 
     fn get_uint8_memory0(&mut self) -> Memory {
-        // TODO: メモリ周り正しくうごくように
         let cacheget_uint8_memory0 = self.instance
             .get_memory("memory")
             .ok_or(anyhow::format_err!("failed to find `memory` memory export")).unwrap();
@@ -172,7 +198,7 @@ impl Wasm {
         let read = arg.len();
         let mut buf = String::from_utf8(arg.to_string().into_bytes()).unwrap();
         let written = buf.len();
-        unsafe { ptr::copy_nonoverlapping::<u8>(view.as_mut_ptr(), buf.as_mut_ptr(), written) }
+        unsafe { ptr::copy_nonoverlapping::<u8>(buf.as_mut_ptr(), view.as_mut_ptr(), written) }
         (read, written)
     }
 }
@@ -193,10 +219,11 @@ fn sh(s: &str) -> String {
 fn main() {
     let resp = reqwest::blocking::get("http://localhost:5000/hello-world").unwrap();
     assert!(resp.status().is_success());
+    let mut wasm = Wasm::new_frombytes(&resp.bytes().unwrap());
 
     // let filepath = "server/assets/hello-world/pkg/hello_world_bg.wasm";
     // let mut wasm = Wasm::new_fromfile(filepath);
-    let mut wasm = Wasm::new_frombytes(&resp.bytes().unwrap());
+    
     let result = wasm.entry_point("");
     println!("{}", result);
 }
