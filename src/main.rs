@@ -177,25 +177,6 @@ impl Wasm {
                 int32_memory.data_unchecked_mut()[(arg0 + 3) as usize] = ptr0.to_le_bytes()[3];
             }
 
-            unsafe {
-                let memory = match caller.get_export("memory") {
-                    Some(Extern::Memory(mem)) => mem,
-                    _ => return Err(Trap::new("failed to find host memory")),
-                };
-
-                let data = memory.data_unchecked()
-                    .get(ptr0 as u32 as usize..)
-                    .and_then(|arr| arr.get(..len0 as u32 as usize));
-                let string = match data {
-                    Some(data) => match str::from_utf8(data) {
-                        Ok(s) => s,
-                        Err(_) => return Err(Trap::new("invalid utf-8")),
-                    },
-                    None => return Err(Trap::new("pointer/length out of bounds")),
-                };
-                println!("{}", string);
-            };
-
             Ok(())
         });
     
@@ -218,13 +199,12 @@ impl Wasm {
             .ok_or(anyhow::format_err!("failed to find `entry_point` function export")).unwrap()
             .get3::<i32, i32, i32, ()>().unwrap();
     
-        let retptr = self.instance
+        let export_2 = self.instance
             .get_global("__wbindgen_export_2")
-            .ok_or(anyhow::format_err!("failed to find `__wbindgen_export_2` global export")).unwrap()
-            .get()
-            .unwrap_i32();
-        let retptr = retptr - 16;
-    
+            .ok_or(anyhow::format_err!("failed to find `__wbindgen_export_2` global export")).unwrap();
+        let retptr = export_2.get().unwrap_i32() - 16;
+        export_2.set(Val::I32(retptr)).unwrap();
+        
         let malloc = self.instance
             .get_func("__wbindgen_malloc")
             .ok_or(anyhow::format_err!("failed to find `__wbindgen_malloc` function export")).unwrap()
@@ -238,22 +218,24 @@ impl Wasm {
         let ptr0 = self.pass_string_to_wasm0(arg, malloc, realloc);
         let len0 = self.wasm_vector_len as i32;
         entry_point_func(retptr, ptr0, len0).unwrap();
+        
         let r0 = unsafe {
             i32::from_le_bytes([
-                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 0) as usize],
-                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 1) as usize],
-                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 2) as usize],
-                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 3) as usize],
+                self.get_int32_memory0().data_unchecked()[(retptr + 0) as usize],
+                self.get_int32_memory0().data_unchecked()[(retptr + 1) as usize],
+                self.get_int32_memory0().data_unchecked()[(retptr + 2) as usize],
+                self.get_int32_memory0().data_unchecked()[(retptr + 3) as usize],
             ])
         };
         let r1 = unsafe {
             i32::from_le_bytes([
-                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 0 + 4) as usize],
-                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 1 + 4) as usize],
-                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 2 + 4) as usize],
-                self.get_int32_memory0().data_unchecked()[(retptr / 4 + 3 + 4) as usize],
+                self.get_int32_memory0().data_unchecked()[(retptr + 0 + 4) as usize],
+                self.get_int32_memory0().data_unchecked()[(retptr + 1 + 4) as usize],
+                self.get_int32_memory0().data_unchecked()[(retptr + 2 + 4) as usize],
+                self.get_int32_memory0().data_unchecked()[(retptr + 3 + 4) as usize],
             ])
         };
+
         self.get_string_from_wasm0(r0 as i32, r1 as i32).to_string()
     }
 
@@ -369,7 +351,7 @@ fn main() {
     // let filepath = "server/assets/hello-world/pkg/hello_world_bg.wasm";
     // let mut wasm = Wasm::new_fromfile(filepath);
     
-    let result = wasm.entry_point("");
+    let result = wasm.entry_point("abc");
     println!("{}", result);
 }
 
